@@ -2,9 +2,12 @@
 
 ![Invade](https://i.imgur.com/nGSXlnr.jpg "Invade")
 
-Invade is a Python 3 toolkit for interacting with the memory of Windows processes. Common uses include demonstrating software vulnerability proof of concepts, testing data exfiltration, software interoperability, malware research, aiding with debugging and reverse engineering, and computer game modifications.
+Invade is a Python 3 toolkit for interacting with the memory of Windows processes. Common uses include penetration testing, demonstrating software vulnerability proof of concepts, software interoperability, malware research, aiding with debugging and reverse engineering, and computer game modifications.
 
 [https://github.com/cgio/invade](https://github.com/cgio/invade)
+
+[https://pypi.org/project/invade](https://pypi.org/project/invade)
+
 
 **There are four main classes inside main.py:**
 
@@ -36,6 +39,18 @@ Python 3.6+ is required
 
 Keystone Engine for Python must be installed separately. Use the desired installer under [Python module for Windows - Binaries](http://www.keystone-engine.org/download/).
 
+## Files
+Inside /invade:
+* **main.py:** Contains all main code and classes
+* **winapi.py:** Contains Windows API code
+* **version.py:** Contains version information
+
+## Examples
+See [invade_keepass](https://github.com/cgio/invade_keepass) for an example of KeePass password extraction.
+
+## Authors
+* **Chad Gosselin** - [https://github.com/cgio](https://github.com/cgio)
+
 ## Credits
 Thanks to authors and contributors of the following projects:
 * [Python](https://www.python.org/downloads) for Windows
@@ -43,11 +58,5 @@ Thanks to authors and contributors of the following projects:
 * [Cuckoo Sandbox](https://github.com/cuckoosandbox/cuckoo) (debug privilege granting code has been adapted)
 * [pefile](https://github.com/erocarrera/pefile) (used for gathering information about PE files)
 
-## Examples
-See [TODO](https://example.com) for an example of KeePass password exfiltration.
-
-## Authors
-* **Chad Gosselin** - [https://github.com/cgio](https://github.com/cgio)
-
 ## License
-This project is licensed under the MIT License. See the [LICENSE.md](LICENSE.md) file for details.
+This project is licensed under the MIT License. See [LICENSE.md](LICENSE.md) for details. This project is for educational purposes only. Use at your own risk.
