@@ -28,7 +28,7 @@ from .version import *
 
 # Classes
 
-class Me:
+class Me(object):
     """Contains information about the operating environment.
 
     Attributes:
@@ -55,7 +55,7 @@ class Me:
             self.is_debug_privilege_enabled = False
 
 
-class Scout:
+class Scout(object):
     """Contains information about active processes.
 
     Typically, only one instance of Scout is used. However, you may want to
@@ -85,7 +85,7 @@ class Scout:
                                                       self.processes)
 
 
-class Target:
+class Target(object):
     """Contains information about the target process.
 
     Target is typically used after finding the desired process with Scout.
@@ -115,18 +115,19 @@ class Target:
 
     def __init__(self, pid, process_access_rights=PROCESS_ALL_ACCESS,
                  process_name=None, report_errors=True):
+        self._is_active = None
         self.report_errors = report_errors
         self.process_name = process_name
         self.pid = pid
         self.process_access_rights = process_access_rights
         self.process_handle = \
             Tool.get_process_handle_by_pid(pid, process_access_rights)
-        self.is_active = Tool.is_process_active(self.process_handle)
         self.is_x64 = None
         self.base_address = None
         self.path = None
         self.version_info = None
         self.entry_point_address = None
+
         if self.process_handle != 0:
             self.is_x64 = Tool.is_process_x64(self.process_handle)
             self.path = Tool.get_process_path_by_handle(self.process_handle,
@@ -154,8 +155,17 @@ class Target:
         else:
             self.process_handle = False
 
+    @property
+    def is_active(self):
+        return self._is_active
 
-class Tool:
+    @is_active.getter
+    def is_active(self):
+        if hasattr(self, 'process_handle'):
+            return Tool.is_process_active(self.process_handle)
+
+
+class Tool(object):
     """Contains common and miscellaneous methods.
 
     Attributes:
@@ -1439,7 +1449,7 @@ class Tool:
 
         Args:
             s (str): The byte string.
-            unicode (bool, optoinal): If True, hexadecimal values in s must be
+            unicode (bool, optional): If True, hexadecimal values in s must be
                 separated by '00'.
             unicode_terminate (bool, optional): If True, return as soon as the
                 unicode terminating sequence '0000' is encountered.
