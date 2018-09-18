@@ -20,10 +20,18 @@ import struct
 import binascii
 import uuid
 import subprocess
+
 import pefile  # https://github.com/erocarrera/pefile
+import capstone  # https://github.com/aquynh/capstone
 import keystone  # https://github.com/keystone-engine/keystone
+
 from .winapi import *
 from .version import *
+
+
+# Constants
+
+X86_MC_INSN_MAX = 15  # Max number of bytes for a single x86 instruction
 
 
 # Classes
@@ -64,6 +72,10 @@ class Scout(object):
 
     Args:
         process_name (str): Name of the process, e.g. 'calc.exe'.
+        case_sensitive (bool, optional): Whether the process name comparison
+            should be case-sensitive.
+        contains (bool, optional): Allows partial matching. If True, a partial
+            process_name may return results.
         report_errors (bool): If True, errors will print.
 
     Attributes:
@@ -74,7 +86,8 @@ class Scout(object):
 
     """
 
-    def __init__(self, process_name=None, report_errors=True):
+    def __init__(self, process_name=None, case_sensitive=False, contains=False,
+                 report_errors=True):
         self.process_name = process_name
         self.report_errors = report_errors
         self.processes = None
@@ -82,7 +95,9 @@ class Scout(object):
         self.pids = None
         if process_name:
             self.pids = Tool.get_pids_by_process_name(process_name,
-                                                      self.processes)
+                                                      self.processes,
+                                                      case_sensitive,
+                                                      contains)
 
 
 class Target(object):
@@ -112,6 +127,16 @@ class Target(object):
         report_errors (bool): If True, errors are printed.
 
     """
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if self.process_handle:
+                Tool.close_handle(self.process_handle)
+        except AttributeError:
+            pass
 
     def __init__(self, pid, process_access_rights=PROCESS_ALL_ACCESS,
                  process_name=None, report_errors=True):
@@ -168,14 +193,7 @@ class Target(object):
 class Tool(object):
     """Contains common and miscellaneous methods.
 
-    Attributes:
-        is_x64 (bool): If True, Tool is enabled in 64-bit mode. Currently
-            only used by Tool.get_opcodes().
-
     """
-
-    def __init__(self):
-        self.is_x64 = Tool.is_x64()
 
     @staticmethod
     def memory_allocate(process_handle, size,
@@ -711,11 +729,6 @@ class Tool(object):
     @staticmethod
     def pe_get_file_version(path):
         """Get an executable's version information via PE header."""
-        pe = pefile.PE(path, fast_load=True)
-        pe.parse_data_directories(
-            directories=[
-                pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
-
         version_info = {
             'file_version_1': None,
             'product_version_1': None,
@@ -725,42 +738,56 @@ class Tool(object):
             'minor_image_version': None,
         }
 
-        for i in version_info:
-            try:
-                if i == 'file_version_1':
-                    version_info[i] = pe.FileInfo[0].StringTable[0].entries[
-                        b'FileVersion'].decode()
-                elif i == 'product_version_1':
-                    version_info[i] = pe.FileInfo[0].StringTable[0].entries[
-                        b'ProductVersion'].decode()
-                elif i == 'file_version_2':
-                    file_version_ms = pe.VS_FIXEDFILEINFO.FileVersionMS
-                    file_version_ls = pe.VS_FIXEDFILEINFO.FileVersionLS
-                    version_info[i] = f'{file_version_ms >> 16}' \
-                                      f'.{file_version_ms & 0xFFFF}' \
-                                      f'.{file_version_ls >> 16}' \
-                                      f'.{file_version_ls & 0xFFFF}'
-                elif i == 'product_version_2':
-                    product_version_ms = pe.VS_FIXEDFILEINFO.ProductVersionMS
-                    product_version_ls = pe.VS_FIXEDFILEINFO.ProductVersionLS
-                    version_info[
-                        i] = f'{product_version_ms >> 16}' \
-                             f'.{product_version_ms & 0xFFFF}' \
-                             f'.{product_version_ls >> 16}' \
-                             f'.{product_version_ls & 0xFFFF}'
-                elif i == 'major_image_version':
-                    version_info[i] = str(pe.OPTIONAL_HEADER.MajorImageVersion)
-                elif i == 'minor_image_version':
-                    version_info[i] = str(pe.OPTIONAL_HEADER.MinorImageVersion)
-            except (AttributeError, KeyError):
-                continue
+        f = pefile.PE(path, fast_load=True)
+        f.parse_data_directories(
+            directories=[
+                pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+
+        try:
+            for a in f.FileInfo:
+                for b in a:
+                    if b.name == 'StringFileInfo':
+                        for c in b.StringTable:
+                            version_info['file_version_1'] = \
+                                c.entries[b'FileVersion'].decode()
+                            version_info['product_version_1'] = \
+                                c.entries[b'ProductVersion'].decode()
+                            break
+        except (AttributeError, KeyError):
+            pass
+
+        try:
+            file_version_ms = f.VS_FIXEDFILEINFO.FileVersionMS
+            file_version_ls = f.VS_FIXEDFILEINFO.FileVersionLS
+            version_info['file_version_2'] = \
+                f'{file_version_ms >> 16}' \
+                f'.{file_version_ms & 0xFFFF}' \
+                f'.{file_version_ls >> 16}' \
+                f'.{file_version_ls & 0xFFFF}'
+            product_version_ms = f.VS_FIXEDFILEINFO.ProductVersionMS
+            product_version_ls = f.VS_FIXEDFILEINFO.ProductVersionLS
+            version_info['product_version_2'] = \
+                f'{product_version_ms >> 16}' \
+                f'.{product_version_ms & 0xFFFF}' \
+                f'.{product_version_ls >> 16}' \
+                f'.{product_version_ls & 0xFFFF}'
+        except (AttributeError, KeyError):
+            pass
+
+        try:
+            version_info['major_image_version'] = \
+                f.OPTIONAL_HEADER.MajorImageVersion
+            version_info['minor_image_version'] = \
+                f.OPTIONAL_HEADER.MinorImageVersion
+        except (AttributeError, KeyError):
+            pass
 
         return version_info
 
     @staticmethod
     def pe_get_export_symbol_address(symbol, path, include_base=False,
                                      case_sensitive=False):
-        """Get the a symbol's address inside a PE file.
+        """Get a symbol's address inside a PE file.
 
         Commonly used to find the address of a function inside a DLL file.
 
@@ -849,24 +876,78 @@ class Tool(object):
         if section_code_cave:
             return section_code_cave
 
-    def get_opcodes(self, assembly, address=0):
-        """Get opcodes from Keystone for a string of assembly instructions.
+    @staticmethod
+    def get_asm(is_x64, mc, address=0):
+        """Get assembly from Capstone for a string of machine code bytes.
 
         Args:
-            assembly (str): A string of assembly. Use ; to delimit commands,
-                e.g. 'mov eax, ebx;jmp 0xd46694'.
+            is_x64 (bool): Generate assembly in 64-bit or 32-bit mode.
+            mc (str): A string of machine code such as '55 8B EC 56'.
             address (int, optional): The address of where the code would be.
-                This typically would be a memory address to ensure the opcodes
-                are correctly computed based on the location at which they
-                reside.
+                This typically would be a memory address to ensure correct
+                instruction calculation.
 
         Returns:
-            str: A string of opcodes on success.
+            list: A list of dicts containing disassembly information.
         """
-        return Tool._keystone_convert_to_opcodes(self, assembly, address)
+        try:
+            mc = bytes(bytearray.fromhex(mc))
+        except ValueError:
+            return
+        if type(is_x64) is not bool:
+            return
+        mode = capstone.CS_MODE_64
+        if not is_x64:
+            mode = capstone.CS_MODE_32
+        cs = capstone.Cs(capstone.CS_ARCH_X86, mode)
+        asm = []
+        try:
+            for (address, size, mnemonic, op_str) in \
+                    cs.disasm_lite(mc, address):
+                asm.append({
+                    'addr': address,
+                    'size': size,
+                    'asm': f'{mnemonic} {op_str}'
+                })
+            return asm
+        except capstone.CsError:
+            return
 
     @staticmethod
-    def get_opcodes_len(s):
+    def get_mc(is_x64, asm, address=0):
+        """Get machine code bytes from Keystone for a string of assembly
+        instructions.
+
+        Args:
+            is_x64 (bool): Generate machine code in 64-bit or 32-bit mode.
+            asm (str): A string of assembly. Use ; or \n to delimit commands,
+                e.g. 'mov eax, ebx;jmp 0xd46694'.
+            address (int, optional): The address of where the code would be.
+                This typically would be a memory address to ensure correct
+                instruction calculation.
+
+        Returns:
+            str: A string of machine code bytes on success.
+        """
+        if type(asm) is not str:
+            return
+        if type(is_x64) is not bool:
+            return
+        mode = keystone.KS_MODE_64
+        if not is_x64:
+            mode = keystone.KS_MODE_32
+        try:
+            ks = keystone.Ks(keystone.KS_ARCH_X86, mode)
+            asm_bytes = asm.encode()
+            mc, mc_size = ks.asm(asm_bytes, address)
+            result = Tool.convert_list_int_to_str_hex(mc)
+            if result:
+                return result
+        except keystone.KsError:
+            return
+
+    @staticmethod
+    def get_mc_size(s):
         """Get the number of bytes in a hex string."""
         s = ''.join(s.split())
         if Tool.is_str_hexadecimal(s):
@@ -975,15 +1056,17 @@ class Tool(object):
 
     @staticmethod
     def get_pids_by_process_name(process_name, process_list,
-                                 case_sensitive=False):
+                                 case_sensitive=False, contains=False):
         """Get a list of PIDs for the given process name.
 
         Args:
             process_name (str): The name of process, i.e. 'calc.exe'.
             process_list (list): A list of processes obtained from
                 get_processes().
-            case_sensitive (bool, optional): Whether the process name 
+            case_sensitive (bool, optional): Whether the process name
                 comparison should be case-sensitive.
+            contains (bool, optional): Allows partial matching. If True, a
+                partial process_name may return results.
 
         Returns:
             list: A list of int PIDs on success.
@@ -991,11 +1074,19 @@ class Tool(object):
         pids = []
         for i in range(len(process_list)):
             if case_sensitive:
-                if process_list[i][0] == process_name:
-                    pids.append(process_list[i][1])
+                if contains:
+                    if process_name in process_list[i][0]:
+                        pids.append(process_list[i][1])
+                else:
+                    if process_list[i][0] == process_name:
+                        pids.append(process_list[i][1])
             else:
-                if process_list[i][0].lower() == process_name.lower():
-                    pids.append(process_list[i][1])
+                if contains:
+                    if process_name.lower() in process_list[i][0].lower():
+                        pids.append(process_list[i][1])
+                else:
+                    if process_list[i][0].lower() == process_name.lower():
+                        pids.append(process_list[i][1])
         if pids:
             return pids
         else:
@@ -1287,6 +1378,10 @@ class Tool(object):
         return True
 
     @staticmethod
+    def close_handle(handle):
+        return CloseHandle(handle)
+
+    @staticmethod
     def is_windows():
         return sys.platform == 'win32'
 
@@ -1308,21 +1403,22 @@ class Tool(object):
     @staticmethod
     def is_process_x64(process_handle):
         """Check if target process is x64 or x86. For insight, see MSDN's
-        description of IsWow64Process usage.
+        description of IsWow64Process.
         """
         try:
             IsWow64Process = kernel32.IsWow64Process
         except AttributeError:
             return
 
-        _is_x64 = BOOL(False)
+        _is_wow64 = BOOL(False)
         _is_windows_x64 = Tool.is_windows_x64()
 
-        if IsWow64Process(process_handle, byref(_is_x64)):
+        if IsWow64Process(process_handle, byref(_is_wow64)):
             if _is_windows_x64 is False:
                 return False
-            elif _is_windows_x64 and not _is_x64:
-                return True
+            elif _is_wow64.value:
+                return False
+            return True
         return
 
     @staticmethod
@@ -1402,14 +1498,32 @@ class Tool(object):
         return ''.join('%02X' % i for i in l)
 
     @staticmethod
+    def convert_int_pointer_to_str_hex(i):
+        """Converts a memory pointer integer to hex pointer string.
+
+        For example, if i = 73588229205, '5544332211' is returned. The int is
+        converted to hex string (with '0x' omitted) and then reversed. This is
+        useful for obtaining hex pointers which are represented in memory in
+        little endian format. Note that if the hex string has an odd length
+        (e.g. '22b'), a '0' is padded to the last byte string so that '0b22' is
+        returned.
+        """
+        str_hex = f'{i:02x}'
+        if len(str_hex) % 2:
+            str_hex = str_hex[:-1] + '0' + str_hex[-1:]
+        str_hex = bytearray.fromhex(str_hex)
+        str_hex.reverse()
+        return str_hex.hex()
+
+    @staticmethod
     def convert_bytes_pointer_to_int(b):
         """Converts a memory pointer into an integer.
 
         For example, a pointer to 0x500432 in memory would look like this in
         Windows x64: 32 04 50 00 00 00 00 00
-        This function will convert that data, obtained from 
-        ReadProcessMemory(), i.e.: b'\x32\x04\x50\x00\x00\x00\x00\x00' to: 
-        5243954 (an int) which == 0x500432. This 0x500432 int can then be used 
+        This function will convert that data, obtained from
+        ReadProcessMemory(), i.e.: b'\x32\x04\x50\x00\x00\x00\x00\x00' to:
+        5243954 (an int) which == 0x500432. This 0x500432 int can then be used
         as needed.
 
         Args:
@@ -1522,20 +1636,3 @@ class Tool(object):
         """Convert ASCII string to Unicode hex string with null terminator."""
         return binascii.hexlify(
             ('\x00'.join(s) + '\x00\x00').encode()).decode()
-
-    def _keystone_convert_to_opcodes(self, asm, address=0):
-        """Used by Tool.get_opcodes()."""
-        if type(asm) is not str:
-            return
-        mode = keystone.KS_MODE_64
-        if not self.is_x64:
-            mode = keystone.KS_MODE_32
-        try:
-            ks = keystone.Ks(keystone.KS_ARCH_X86, mode)
-            asm_bytes = asm.encode()
-            opcodes, opcodes_len = ks.asm(asm_bytes, address)
-            result = Tool.convert_list_int_to_str_hex(opcodes)
-            if result:
-                return result
-        except keystone.KsError:
-            return

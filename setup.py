@@ -11,7 +11,7 @@ setuptools.setup(
     name='invade',
     version=version['__version__'],
     author='Chad Gosselin',
-    description='A toolkit for interacting with Windows process memory',
+    description='A library for interacting with Windows process memory',
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/cgio/invade',
